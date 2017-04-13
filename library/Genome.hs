@@ -6,6 +6,7 @@ module Genome (
 
 import Control.Monad.Random
 import Data.IntSet (IntSet, member, union, unions, singleton)
+import Data.List (partition)
 
 {--
 The genotype is represented as:
@@ -57,8 +58,16 @@ mutateAddConnection inno innos genome = do
            w <- getRandomR (-weightRange, weightRange)
            let (innog, (inno1, innos1)) = reuseInnovation f t (inno, innos)
                gene = Gene { inNode = f, outNode = t, innov = innog, weight = w, enabled = True }
-               genome2 = genome { genes = gene : genes genome }
+               genome2 = genome { genes = insertGene gene (genes genome) }
            return $ Just (inno1, innos1, genome2)
+
+-- We want to keep the genes ordered by innovation, so we can crossover fast
+insertGene :: Gene -> [Gene] -> [Gene]
+insertGene = go []
+    where go acc g [] = reverse (g:acc)
+          go acc g gs@(g1:gs1)
+              | innov g < innov g1 = reverse (g:acc) ++ gs
+              | otherwise          = go (g1:acc) g gs1
 
 -- Add node splits one connection in 2, with a new (hidden) node in between
 -- Only enabled connections can be chosen
@@ -66,24 +75,40 @@ mutateAddNode :: (RandomGen g, Monad m) => Int -> Innovations -> Genome
                                         -> RandT g m (Int, Innovations, Genome)
 mutateAddNode inno innos genome = do
     let cs = filter enabled (genes genome)
-    co <- uniform cs
+    co <- uniform cs -- what if all genes are disabled??
     let cd = co { enabled = False }
-        (cs1, cs2) = span ((/= innov co) . innov) (genes genome)
         h = hiddenNodes genome + 1
         n = inNodes genome + outNodes genome + h
         (innog1, (inno1, innos1)) = reuseInnovation (inNode co) n  (inno,  innos)
         (innog2, (inno2, innos2)) = reuseInnovation n (outNode co) (inno1, innos1)
         gene1 = co { outNode = n, innov = innog1, weight = 1 }
         gene2 = co { inNode = n,  innov = innog2 }
-        genome2 = genome { hiddenNodes = h, genes = cs1 ++ [cd] ++ tail cs2 ++ [gene1, gene2] }
+        gs = insertGene gene1 $ insertGene gene2 $ replaceGene (innov co) cd (genes genome)
+        genome2 = genome { hiddenNodes = h, genes = gs }
     return (inno2, innos2, genome2)
+
+replaceGene :: Int -> Gene -> [Gene] -> [Gene]
+replaceGene i g = go []
+    where go acc [] = error ("Gene not found: " ++ show i)
+          go acc (g1:gs)
+              | innov g1 == i = reverse (g:acc) ++ gs
+              | otherwise     = go (g1:acc) gs
 
 -- Mutate weights: every weight gets a new value with some probability
 -- or just a perturbation of the current value (uniform from 0 to 200%)
 mutateWeights :: (RandomGen g, Monad m) => Float -> Genome -> RandT g m Genome
 mutateWeights newp genome = do
-    gs <- mapM (mutateOneWeight newp) (filter enabled $ genes genome)
-    return genome { genes = gs ++ filter (not . enabled) (genes genome) }
+    let (gs1, gs2) = partition enabled (genes genome)
+    gs <- mapM (mutateOneWeight newp) gs1 -- only the enabled genes get mutated
+    return genome { genes = mergeGenes gs gs2 }
+
+mergeGenes :: [Gene] -> [Gene] -> [Gene]
+mergeGenes = go
+    where go [] gs2 = gs2
+          go gs1 [] = gs1
+          go (g1:gs1) (g2:gs2)
+              | innov g1 < innov g2 = g1 : g2 : go gs1 gs2
+              | otherwise           = g2 : g1 : go gs1 gs2
 
 mutateOneWeight :: (RandomGen g, Monad m) => Float -> Gene -> RandT g m Gene
 mutateOneWeight newp gene = do
