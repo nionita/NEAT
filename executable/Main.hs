@@ -44,3 +44,9 @@ main2 = do
   putStrLn $ "addConnection 1: " ++ show genome2
   putStrLn $ "addConnection 2: " ++ show genome3
   putStrLn $ "addConnection 3: " ++ show genome4
+  genome5 <- evalRandTIO $ mutateAddNode 6 genome
+  genome6 <- evalRandTIO $ mutateAddNode 8 genome5
+  genome7 <- evalRandTIO $ mutateAddNode 10 genome6
+  putStrLn $ "addNode 1: " ++ show genome5
+  putStrLn $ "addNode 2: " ++ show genome6
+  putStrLn $ "addNode 3: " ++ show genome7
