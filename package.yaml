@@ -57,6 +57,7 @@ tests:
     - tasty
     - tasty-hspec
     - containers
+    - MonadRandom
     ghc-options:
     - -rtsopts
     - -threaded
