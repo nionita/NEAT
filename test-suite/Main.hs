@@ -54,32 +54,31 @@ spec = parallel $ do
 someGenomeOperations :: IO [[Int]]
 someGenomeOperations =
     evalRandTIO $ do
-         let genome0 = Genome {
-                           inNodes = 3, outNodes = 1, hiddenNodes = 0, genes = []
-                       }
+         let env = EnvParams { inNodes = 3, outNodes = 1 }
+             genome0 = Genome { hiddenNodes = 0, genes = [] }
              i0  = 1
              is0 = []
-         mr1 <- mutateAddConnection i0 is0 genome0
+         mr1 <- mutateAddConnection env i0 is0 genome0
          let (i1, is1, genome1) = case mr1 of
                  Just r  -> r
                  Nothing -> (i0, is0, genome0)
-         mr2 <- mutateAddConnection i1 is1 genome1
+         mr2 <- mutateAddConnection env i1 is1 genome1
          let (i2, is2, genome2) = case mr2 of
                  Just r  -> r
                  Nothing -> (i1, is1, genome1)
-         mr3 <- mutateAddConnection i2 is2 genome2
+         mr3 <- mutateAddConnection env i2 is2 genome2
          let (i3, is3, genome3) = case mr3 of
                  Just r  -> r
                  Nothing -> (i2, is2, genome2)
-         (i4, is4, genome4) <- mutateAddNode i3 is3 genome3
-         (i5, is5, genome5) <- mutateAddNode i4 is4 genome3
-         (i6, is6, genome6) <- mutateAddNode i5 is5 genome3
+         (i4, is4, genome4) <- mutateAddNode env i3 is3 genome3
+         (i5, is5, genome5) <- mutateAddNode env i4 is4 genome3
+         (i6, is6, genome6) <- mutateAddNode env i5 is5 genome3
          genome7 <- mutateWeights 0.2 genome4
          genome8 <- mutateWeights 0.2 genome5
          genome9 <- mutateWeights 0.2 genome6
-         genome10 <- crossOver (genome7, 10) (genome8, 11)
-         genome11 <- crossOver (genome8, 11) (genome9, 12)
-         genome12 <- crossOver (genome9, 12) (genome7, 10)
+         genome10 <- crossOver env (genome7, 10) (genome8, 11)
+         genome11 <- crossOver env (genome8, 11) (genome9, 12)
+         genome12 <- crossOver env (genome9, 12) (genome7, 10)
          return [innovations genome1, innovations genome2, innovations genome2
                 , innovations genome2, innovations genome2, innovations genome2
                 , innovations genome2, innovations genome2, innovations genome2

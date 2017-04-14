@@ -10,8 +10,9 @@ main = main2
 
 main1 :: IO ()
 main1 = do
-  let genome = Genome {
-                   inNodes = 3, outNodes = 1, hiddenNodes = 1,
+  let env = EnvParams { inNodes = 3, outNodes = 1 }
+      genome = Genome {
+                   hiddenNodes = 1,
                    genes = [gene1, gene2, gene3, gene4, gene5]
                }
       gene1 = Gene { inNode = 1, outNode = 4, innov = 1, weight =  0.1, enabled = True }
@@ -19,7 +20,7 @@ main1 = do
       gene3 = Gene { inNode = 2, outNode = 5, innov = 3, weight = -0.3, enabled = True }
       gene4 = Gene { inNode = 5, outNode = 4, innov = 4, weight = -0.4, enabled = True }
       gene5 = Gene { inNode = 3, outNode = 4, innov = 5, weight =  0.5, enabled = True }
-      myNet = genomeToFunction genome
+      myNet = genomeToFunction env genome
       input1 = [1, 2, 3]
       input2 = [3, 4, 5]
       out1 = myNet input1
@@ -29,20 +30,19 @@ main1 = do
 
 main2 :: IO ()
 main2 = evalRandTIO $ do
-  let genome0 = Genome {
-                    inNodes = 3, outNodes = 1, hiddenNodes = 0, genes = []
-                }
+  let env = EnvParams { inNodes = 3, outNodes = 1 }
+      genome0 = Genome { hiddenNodes = 0, genes = [] }
       i0  = 1
       is0 = []
-  mr1 <- mutateAddConnection i0 is0 genome0
+  mr1 <- mutateAddConnection env i0 is0 genome0
   let (i1, is1, genome1) = case mr1 of
           Just r  -> r
           Nothing -> (i0, is0, genome0)
-  mr2 <- mutateAddConnection i1 is1 genome1
+  mr2 <- mutateAddConnection env i1 is1 genome1
   let (i2, is2, genome2) = case mr2 of
           Just r  -> r
           Nothing -> (i1, is1, genome1)
-  mr3 <- mutateAddConnection i2 is2 genome2
+  mr3 <- mutateAddConnection env i2 is2 genome2
   let (i3, is3, genome3) = case mr3 of
           Just r  -> r
           Nothing -> (i2, is2, genome2)
@@ -54,9 +54,9 @@ main2 = evalRandTIO $ do
     putStrLn "addConnection 2 -> 3:"
     showGenome genome3
     putStrLn "====================="
-  (i4, is4, genome4) <- mutateAddNode i3 is3 genome3
-  (i5, is5, genome5) <- mutateAddNode i4 is4 genome3
-  (i6, is6, genome6) <- mutateAddNode i5 is5 genome3
+  (i4, is4, genome4) <- mutateAddNode env i3 is3 genome3
+  (i5, is5, genome5) <- mutateAddNode env i4 is4 genome3
+  (i6, is6, genome6) <- mutateAddNode env i5 is5 genome3
   liftIO $ do
     putStrLn "addNode 3 -> 4:"
     showGenome genome4
@@ -76,9 +76,9 @@ main2 = evalRandTIO $ do
     putStrLn "mutate weights: 6 -> 9"
     showGenome genome9
     putStrLn "====================="
-  genome10 <- crossOver (genome7, 10) (genome8, 11)
-  genome11 <- crossOver (genome8, 11) (genome9, 12)
-  genome12 <- crossOver (genome9, 12) (genome7, 10)
+  genome10 <- crossOver env (genome7, 10) (genome8, 11)
+  genome11 <- crossOver env (genome8, 11) (genome9, 12)
+  genome12 <- crossOver env (genome9, 12) (genome7, 10)
   liftIO $ do
     putStrLn "cross over 7, 8 -> 10:"
     showGenome genome10
@@ -89,6 +89,5 @@ main2 = evalRandTIO $ do
 
 showGenome :: Genome -> IO ()
 showGenome genome = do
-  putStrLn $ "- inNodes = " ++ show (inNodes genome) ++ ", outNodes = " ++ show (outNodes genome)
-      ++ ", hiddenNodes = " ++ show (hiddenNodes genome)
+  putStrLn $ "- hiddenNodes = " ++ show (hiddenNodes genome)
   forM_ (genes genome) $ \g -> putStrLn ("- " ++ show g)

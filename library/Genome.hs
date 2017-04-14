@@ -1,5 +1,5 @@
 module Genome (
-    Gene(..), Genome(..), Connection(..), Innovations,
+    EnvParams(..), Gene(..), Genome(..), Connection(..), Innovations,
     mutateAddConnection, mutateAddNode, mutateWeights, crossOver,
     closure, connectedIn
 ) where
@@ -9,14 +9,30 @@ import Data.IntSet (IntSet, member, union, unions, singleton)
 import Data.List (partition)
 
 {--
-The genotype is represented as:
-- the number of sensors (inputs), outputs and hidden nodes (there is always a bias "input", always 1)
-- a list of connecton genes, describing the connections of the network and its weights
+The environment in which the NEAT problem is solved fixes the number of inputs and
+the number of outputs of a network. Also a special input, the bias, which is always value 1,
+is always present (node 0).
+The number of inputs and outputs are kept, together with other parameters, in the EnvParams
+data structure.
 
-Connections go from one node to another with 2 restrictions:
-- a sensor node cannot appear as a destination
-- connections cannot form cycles
+The genotype is represented as:
+- the number of hidden nodes (could be 0)
+- a list of connection genes, describing the connections of the network and their weights
+
+Connections go from one node to another with following restrictions:
+- an input node cannot appear as a destination (same for the bias)
+- connections cannot form cycles (this is a marcant difference to the original NEAT paper)
+
+The nodes are numbered as follows:
+- node 0: the bias input (has always value 1)
+- node 1 to inNodes: the input nodes
+- node inNodes + 1 to inNodes + outNodes: the output nodes
+- nodes greater than inNodes + outNodes (if any): hidden nodes
 --}
+
+data EnvParams = EnvParams {
+                     inNodes, outNodes :: Int
+               }
 
 data Gene = Gene {
                 inNode, outNode, innov :: Int,
@@ -25,7 +41,7 @@ data Gene = Gene {
           } deriving Show
 
 data Genome = Genome {
-                  inNodes, outNodes, hiddenNodes :: Int,
+                  hiddenNodes :: Int,
                   genes :: [Gene]
             } deriving Show
 
@@ -44,11 +60,11 @@ reuseInnovation f t (inno, innos)
 -- We have to add connections in such a way that we do not create cycles
 -- If we have chosen the wrong nodes, we may fail
 -- Same innovation in the same generation will get the same number (reuse)
-mutateAddConnection :: (RandomGen g, Monad m) => Int -> Innovations -> Genome
+mutateAddConnection :: (RandomGen g, Monad m) => EnvParams -> Int -> Innovations -> Genome
                                               -> RandT g m (Maybe (Int, Innovations, Genome))
-mutateAddConnection inno innos genome = do
-    let maf = inNodes genome + outNodes genome + hiddenNodes genome
-        mit = inNodes genome + 1
+mutateAddConnection env inno innos genome = do
+    let maf = inNodes env + outNodes env + hiddenNodes genome
+        mit = inNodes env + 1
         gs  = filter enabled (genes genome)
     f <- getRandomR (0,   maf) -- every node can be source
     t <- getRandomR (mit, maf) -- bias and inputs can't be destination
@@ -71,14 +87,14 @@ insertGene = go []
 
 -- Add node splits one connection in 2, with a new (hidden) node in between
 -- Only enabled connections can be chosen
-mutateAddNode :: (RandomGen g, Monad m) => Int -> Innovations -> Genome
+mutateAddNode :: (RandomGen g, Monad m) => EnvParams -> Int -> Innovations -> Genome
                                         -> RandT g m (Int, Innovations, Genome)
-mutateAddNode inno innos genome = do
+mutateAddNode env inno innos genome = do
     let cs = filter enabled (genes genome)
     co <- uniform cs -- what if all genes are disabled??
     let cd = co { enabled = False }
         h = hiddenNodes genome + 1
-        n = inNodes genome + outNodes genome + h
+        n = inNodes env + outNodes env + h
         (innog1, (inno1, innos1)) = reuseInnovation (inNode co) n  (inno,  innos)
         (innog2, (inno2, innos2)) = reuseInnovation n (outNode co) (inno1, innos1)
         gene1 = co { outNode = n, innov = innog1, weight = 1 }
@@ -121,11 +137,11 @@ mutateOneWeight newp gene = do
     return gene { weight = w }
 
 -- Cross over depends on the fitness of the 2 genomes
-crossOver :: (RandomGen g, Monad m) => (Genome, Float) -> (Genome, Float) -> RandT g m Genome
-crossOver (genome1, fitness1) (genome2, fitness2) = do
+crossOver :: (RandomGen g, Monad m) => EnvParams -> (Genome, Float) -> (Genome, Float) -> RandT g m Genome
+crossOver env (genome1, fitness1) (genome2, fitness2) = do
     gs <- mergeGenesRandom fitness1 fitness2 (genes genome1) (genes genome2)
     let m = maximum $ map inNode gs -- if we take inNode we should hit the nodes which matter
-        h = m - (inNodes genome1 + outNodes genome1)
+        h = m - (inNodes env + outNodes env)
     return genome1 { hiddenNodes = h, genes = gs }
 
 -- Matching genes are inherited randomly (which actually means, only weight & enabling are

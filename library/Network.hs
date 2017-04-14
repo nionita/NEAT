@@ -6,21 +6,17 @@ import Data.Array
 import qualified Data.IntMap as M
 import Genome
 
-{--
---}
-
 type Network = [Float] -> [Float]
 
--- Our network is a function from the list of inputs
--- to the list of outputs
-genomeToFunction :: Genome -> [Float] -> [Float]
-genomeToFunction genome is = map (a!) [n1..n2]
+-- Our network is a function from the list of inputs to the list of outputs
+genomeToFunction :: EnvParams -> Genome -> [Float] -> [Float]
+genomeToFunction env genome is = map (a!) [n1..n2]
     where f gene imap = let nw = [(inNode gene, weight gene)]
                         in M.insertWith (++) (outNode gene) nw imap
           rmap = foldr f M.empty $ filter enabled $ genes genome
-          n  = inNodes genome + outNodes genome + hiddenNodes genome
-          n1 = inNodes genome + 1               -- first output node number
-          n2 = inNodes genome + outNodes genome -- last output node number
+          n  = inNodes env + outNodes env + hiddenNodes genome -- last node number
+          n1 = inNodes env + 1            -- first output node number
+          n2 = inNodes env + outNodes env -- last output node number
           g (i, nws) = let (ns, ws) = unzip nws
                            as = map (a!) ns
                            ps = zipWith (*) as ws
