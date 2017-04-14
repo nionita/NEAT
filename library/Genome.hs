@@ -1,6 +1,7 @@
 module Genome (
-    EnvParams(..), Gene(..), Genome(..), Connection(..), Innovations,
-    mutateAddConnection, mutateAddNode, mutateWeights, crossOver,
+    EnvParams(..), Gene(..), Genome(..), Connection(..), Innovations, MutateState,
+    mutateAddConnection, mutateAddNode, mutateWeights, crossOver, mutateGeneric,
+    genomeDistance,
     closure, connectedIn
 ) where
 
@@ -31,7 +32,11 @@ The nodes are numbered as follows:
 --}
 
 data EnvParams = EnvParams {
-                     inNodes, outNodes :: Int
+                     inNodes, outNodes :: Int, -- input & output nodes of the problem
+                     c1, c2, c3 :: Float,      -- coefficients for species distance
+                     distThreshold :: Float,   -- distance threshold for speciation
+                     probNewWeight :: Float,   -- probability of new weight when mutating weights
+                     ratioAddConn, ratioAddNode, ratioWeights :: Rational
                }
 
 data Gene = Gene {
@@ -46,9 +51,26 @@ data Genome = Genome {
             } deriving Show
 
 type Innovations = [((Int, Int), Int)]
+type MutateState = (Int, Innovations, [Genome])
 
 weightRange :: Float
 weightRange = 10  -- value range for new weights
+
+mutateGeneric :: (RandomGen g, Monad m) => EnvParams -> MutateState -> Genome
+                                        -> RandT g m MutateState
+mutateGeneric env (inno, innos, gs) genome = do
+    c <- fromList [(1::Int, ratioAddConn env), (2, ratioAddNode env), (3, ratioWeights env)]
+    case c of
+        1 -> do mr <- mutateAddConnection env inno innos genome
+                case mr of
+                    Just (i, is, g) -> return (i, is, g:gs)
+                    Nothing         -> do  -- fall back on mutating weights
+                        g <- mutateWeights env genome
+                        return (inno, innos, g:gs)
+        2 -> do (i, is, g) <- mutateAddNode env inno innos genome
+                return (i, is, g:gs)
+        _ -> do g <- mutateWeights env genome
+                return (inno, innos, g:gs)
 
 -- Reusing the innovation numbers facilitates the crossovers
 reuseInnovation :: Int -> Int -> (Int, Innovations) -> (Int, (Int, Innovations))
@@ -91,17 +113,20 @@ mutateAddNode :: (RandomGen g, Monad m) => EnvParams -> Int -> Innovations -> Ge
                                         -> RandT g m (Int, Innovations, Genome)
 mutateAddNode env inno innos genome = do
     let cs = filter enabled (genes genome)
-    co <- uniform cs -- what if all genes are disabled??
-    let cd = co { enabled = False }
-        h = hiddenNodes genome + 1
-        n = inNodes env + outNodes env + h
-        (innog1, (inno1, innos1)) = reuseInnovation (inNode co) n  (inno,  innos)
-        (innog2, (inno2, innos2)) = reuseInnovation n (outNode co) (inno1, innos1)
-        gene1 = co { outNode = n, innov = innog1, weight = 1 }
-        gene2 = co { inNode = n,  innov = innog2 }
-        gs = insertGene gene1 $ insertGene gene2 $ replaceGene (innov co) cd (genes genome)
-        genome2 = genome { hiddenNodes = h, genes = gs }
-    return (inno2, innos2, genome2)
+    if null cs
+       then return (inno, innos, genome)
+       else do
+           co <- uniform cs
+           let cd = co { enabled = False }
+               h = hiddenNodes genome + 1
+               n = inNodes env + outNodes env + h
+               (innog1, (inno1, innos1)) = reuseInnovation (inNode co) n  (inno,  innos)
+               (innog2, (inno2, innos2)) = reuseInnovation n (outNode co) (inno1, innos1)
+               gene1 = co { outNode = n, innov = innog1, weight = 1 }
+               gene2 = co { inNode = n,  innov = innog2 }
+               gs = insertGene gene1 $ insertGene gene2 $ replaceGene (innov co) cd (genes genome)
+               genome2 = genome { hiddenNodes = h, genes = gs }
+           return (inno2, innos2, genome2)
 
 replaceGene :: Int -> Gene -> [Gene] -> [Gene]
 replaceGene i g = go []
@@ -112,10 +137,10 @@ replaceGene i g = go []
 
 -- Mutate weights: every weight gets a new value with some probability
 -- or just a perturbation of the current value (uniform from 0 to 200%)
-mutateWeights :: (RandomGen g, Monad m) => Float -> Genome -> RandT g m Genome
-mutateWeights newp genome = do
+mutateWeights :: (RandomGen g, Monad m) => EnvParams -> Genome -> RandT g m Genome
+mutateWeights env genome = do
     let (gs1, gs2) = partition enabled (genes genome)
-    gs <- mapM (mutateOneWeight newp) gs1 -- only the enabled genes get mutated
+    gs <- mapM (mutateOneWeight $ probNewWeight env) gs1 -- only the enabled genes get mutated
     return genome { genes = mergeGenes gs gs2 }
 
 mergeGenes :: [Gene] -> [Gene] -> [Gene]
@@ -140,8 +165,9 @@ mutateOneWeight newp gene = do
 crossOver :: (RandomGen g, Monad m) => EnvParams -> (Genome, Float) -> (Genome, Float) -> RandT g m Genome
 crossOver env (genome1, fitness1) (genome2, fitness2) = do
     gs <- mergeGenesRandom fitness1 fitness2 (genes genome1) (genes genome2)
-    let m = maximum $ map inNode gs -- if we take inNode we should hit the nodes which matter
-        h = m - (inNodes env + outNodes env)
+    let is = map inNode gs -- if we take inNode we should hit the nodes which matter
+        h | null is   = 0
+          | otherwise = max 0 $ maximum is - (inNodes env + outNodes env)
     return genome1 { hiddenNodes = h, genes = gs }
 
 -- Matching genes are inherited randomly (which actually means, only weight & enabling are
@@ -165,6 +191,19 @@ mergeGenesRandom fitness1 fitness2 = go
               | otherwise = do -- equal, i.e. matching genes: chose randomly
                   c <- uniform (False, True)
                   if c then (g1 :) <$> go gs1 gs2 else (g2 :) <$> go gs1 gs2
+
+-- Differently from the original paper, we normalize by the sum of the genes of the 2 genomes
+genomeDistance :: EnvParams -> Genome -> Genome -> Float
+genomeDistance env genome1 genome2
+    = (c1 env * fromIntegral ef + c2 env * fromIntegral df) / fromIntegral nf + c3 env * wf
+    where a = (0, 0, 0) :: (Float, Int, Int)
+          (wf, df, ef, nf) = go a (genes genome1) (genes genome2)
+          go (w, d, n) [] gs2 = let k = length gs2 in (w / fromIntegral n, d, k, n + k)
+          go (w, d, n) gs1 [] = let k = length gs1 in (w / fromIntegral n, d, k, n + k)
+          go (w, d, n) (g1:gs1) (g2:gs2)
+              | innov g1 < innov g2 = go (w, d+1, n+1) gs1 (g2:gs2)
+              | innov g1 > innov g2 = go (w, d+1, n+1) (g1:gs1) gs2
+              | otherwise = go (w + abs (weight g1 - weight g2), d, n+2) gs1 gs2
 
 -- The infrastructure to keep the graph acyclic
 class Connection a where

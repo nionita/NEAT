@@ -1,48 +1,14 @@
 # [NEAT][]
 
-Thanks for starting a project with Haskeleton! If you haven't heard of it
-before, I suggest reading the introductory blog post. You can find it here:
-<http://taylor.fausak.me/2014/03/04/haskeleton-a-haskell-project-skeleton/>.
+This is a Haskell implementation of the NEAT method for evolving neural networks
+through augmenting topologies, as described in the paper by Kenneth O. Stanley
+and Risto Miikkulainen in the MIT Press Journall in 2002,
+<http://mitpress.mit.edu/journals>.
 
-Before you get started, there are a few things that this template couldn't
-provide for you. You should:
+The implementation has a few differences to the original NEAT, most important one
+beeing that the generated networks are not recurrent (no loops in the network
+connections). This restriction can be easily compensated by appropriate design
+of the problem (i.e. some outputs serve as a state, which can be saved and used
+as input in the next step).
 
--   Add a synopsis to `package.yaml`. It should be a short (one sentence)
-    explanation of your project.
-
--   Add a description to `package.yaml`. This can be whatever you want it to
-    be.
-
--   Add a category to `package.yaml`. A list of categories is available on
-    Hackage at <http://hackage.haskell.org/packages>.
-
--   Rename `library/Example.hs` to whatever you want your top-level module to
-    be called. Typically this is the same as your package name but in
-    `CamelCase` instead of `kebab-case`.
-
-    -   Don't forget to rename the reference to it in
-        `executable/Main.hs`!
-
--   If you are on an older version of Stack (<1.0.4), delete `package.yaml` and
-    remove `/*.cabal` from your `.gitignore`.
-
-Once you've done that, start working on your project with the Stack commands
-you know and love.
-
-``` sh
-# Build the project.
-stack build
-
-# Run the test suite.
-stack test
-
-# Run the benchmarks.
-stack bench
-
-# Generate documentation.
-stack haddock
-```
-
-Thanks again, and happy hacking!
-
-[NEAT]: https://github.com/githubuser/NEAT
+[NEAT]: https://github.com/nionita/NEAT
