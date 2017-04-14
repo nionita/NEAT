@@ -1,6 +1,6 @@
 module Genome (
     Gene(..), Genome(..), Connection(..), Innovations,
-    mutateAddConnection, mutateAddNode, mutateWeights,
+    mutateAddConnection, mutateAddNode, mutateWeights, crossOver,
     closure, connectedIn
 ) where
 
@@ -89,7 +89,7 @@ mutateAddNode inno innos genome = do
 
 replaceGene :: Int -> Gene -> [Gene] -> [Gene]
 replaceGene i g = go []
-    where go acc [] = error ("Gene not found: " ++ show i)
+    where go _   [] = error ("Gene not found: " ++ show i)
           go acc (g1:gs)
               | innov g1 == i = reverse (g:acc) ++ gs
               | otherwise     = go (g1:acc) gs
@@ -113,12 +113,42 @@ mergeGenes = go
 mutateOneWeight :: (RandomGen g, Monad m) => Float -> Gene -> RandT g m Gene
 mutateOneWeight newp gene = do
     new <- getRandomR (0, 1)
-    w <- if new >= newp
+    w <- if new < newp
             then getRandomR (-weightRange, weightRange) -- new value
             else do
                 wp <- getRandomR (-1, 1)
                 return $! weight gene * (1 + wp) -- perturbation of old value
     return gene { weight = w }
+
+-- Cross over depends on the fitness of the 2 genomes
+crossOver :: (RandomGen g, Monad m) => (Genome, Float) -> (Genome, Float) -> RandT g m Genome
+crossOver (genome1, fitness1) (genome2, fitness2) = do
+    gs <- mergeGenesRandom fitness1 fitness2 (genes genome1) (genes genome2)
+    let m = maximum $ map inNode gs -- if we take inNode we should hit the nodes which matter
+        h = m - (inNodes genome1 + outNodes genome1)
+    return genome1 { hiddenNodes = h, genes = gs }
+
+-- Matching genes are inherited randomly (which actually means, only weight & enabling are
+-- taken randomly), while disjoint and excess genes are inherited from the fittest parent
+-- (or from both when equal)
+mergeGenesRandom :: (RandomGen g, Monad m) => Float -> Float -> [Gene] -> [Gene] -> RandT g m [Gene]
+mergeGenesRandom fitness1 fitness2 = go
+    where go [] gs2 | fitness1 > fitness2 = return []
+                    | otherwise           = return gs2
+          go gs1 [] | fitness2 > fitness1 = return []
+                    | otherwise           = return gs1
+          go (g1:gs1) (g2:gs2)
+              | innov g1 < innov g2
+                  = if fitness1 >= fitness2
+                       then (g1 :) <$> go gs1 (g2:gs2)
+                       else go gs1 (g2:gs2)
+              | innov g1 > innov g2
+                  = if fitness1 <= fitness2
+                       then (g2 :) <$> go (g1:gs1) gs2
+                       else go (g1:gs1) gs2
+              | otherwise = do -- equal, i.e. matching genes: chose randomly
+                  c <- uniform (False, True)
+                  if c then (g1 :) <$> go gs1 gs2 else (g2 :) <$> go gs1 gs2
 
 -- The infrastructure to keep the graph acyclic
 class Connection a where
