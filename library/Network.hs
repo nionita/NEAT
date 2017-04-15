@@ -1,4 +1,5 @@
 module Network (
+  Network,
   genomeToFunction
 ) where
 
@@ -9,14 +10,14 @@ import Genome
 type Network = [Float] -> [Float]
 
 -- Our network is a function from the list of inputs to the list of outputs
-genomeToFunction :: EnvParams -> Genome -> [Float] -> [Float]
+genomeToFunction :: EnvParams -> Genome -> Network
 genomeToFunction env genome is = map (a!) [n1..n2]
     where f gene imap = let nw = [(inNode gene, weight gene)]
                         in M.insertWith (++) (outNode gene) nw imap
           rmap = foldr f M.empty $ filter enabled $ genes genome
-          n  = inNodes env + outNodes env + hiddenNodes genome -- last node number
-          n1 = inNodes env + 1            -- first output node number
-          n2 = inNodes env + outNodes env -- last output node number
+          n  = envInNodes env + envOutNodes env + hiddenNodes genome -- last node number
+          n1 = envInNodes env + 1               -- first output node number
+          n2 = envInNodes env + envOutNodes env -- last output node number
           g (i, nws) = let (ns, ws) = unzip nws
                            as = map (a!) ns
                            ps = zipWith (*) as ws
