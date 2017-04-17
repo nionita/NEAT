@@ -48,8 +48,16 @@ data Gene = Gene {
                 enabled :: Bool
           } deriving Show
 
+-- We want to keep the genes ordered by innovation, as needed by cross over
+instance Eq Gene where
+    g1 == g2 = innov g1 == innov g2
+
+instance Ord Gene where
+    compare g1 g2 = compare (innov g1) (innov g2)
+
 data Genome = Genome {
                   hiddenNodes :: Int,
+                  origin :: Int, -- 1 = add conn, 2 - add node, 3 - mutate weight, 4 - cross over
                   genes :: [Gene]
             } deriving Show
 
@@ -58,7 +66,7 @@ type Innovations = [((Int, Int), Int)]
 type MutateState = (Int, Innovations, [Genome])
 
 weightRange :: Float
-weightRange = 10  -- value range for new weights
+weightRange = 1  -- value range for new weights
 
 mutateGeneric :: CtxRandom g m => EnvParams -> MutateState -> Genome -> RandT g m MutateState
 mutateGeneric env (inno, innos, gs) genome = do
@@ -99,16 +107,16 @@ mutateAddConnection env inno innos genome = do
            w <- getRandomR (-weightRange, weightRange)
            let (innog, (inno1, innos1)) = reuseInnovation f t (inno, innos)
                gene = Gene { inNode = f, outNode = t, innov = innog, weight = w, enabled = True }
-               genome2 = genome { genes = insertGene gene (genes genome) }
+               genome2 = genome { origin = 1, genes = insertGene gene (genes genome) }
            return $ Just (inno1, innos1, genome2)
 
--- We want to keep the genes ordered by innovation, so we can crossover fast
+-- We want to preserve the genes order
 insertGene :: Gene -> [Gene] -> [Gene]
 insertGene = go []
     where go acc g [] = reverse (g:acc)
           go acc g gs@(g1:gs1)
-              | innov g < innov g1 = reverse (g:acc) ++ gs
-              | otherwise          = go (g1:acc) g gs1
+              | g < g1    = reverse (g:acc) ++ gs
+              | otherwise = go (g1:acc) g gs1
 
 -- Add node splits one connection in 2, with a new (hidden) node in between
 -- Only enabled connections can be chosen
@@ -128,7 +136,7 @@ mutateAddNode env inno innos genome = do
                gene1 = co { outNode = n, innov = innog1, weight = 1 }
                gene2 = co { inNode = n,  innov = innog2 }
                gs = insertGene gene1 $ insertGene gene2 $ replaceGene (innov co) cd (genes genome)
-               genome2 = genome { hiddenNodes = h, genes = gs }
+               genome2 = genome { hiddenNodes = h, origin = 2, genes = gs }
            return (inno2, innos2, genome2)
 
 replaceGene :: Int -> Gene -> [Gene] -> [Gene]
@@ -144,15 +152,16 @@ mutateWeights :: CtxRandom g m => EnvParams -> Genome -> RandT g m Genome
 mutateWeights env genome = do
     let (gs1, gs2) = partition enabled (genes genome)
     gs <- mapM (mutateOneWeight $ envProbNewWeight env) gs1 -- only the enabled genes get mutated
-    return genome { genes = mergeGenes gs gs2 }
+    return genome { origin = 3, genes = mergeGenes gs gs2 }
 
 mergeGenes :: [Gene] -> [Gene] -> [Gene]
 mergeGenes = go
     where go [] gs2 = gs2
           go gs1 [] = gs1
           go (g1:gs1) (g2:gs2)
-              | innov g1 < innov g2 = g1 : g2 : go gs1 gs2
-              | otherwise           = g2 : g1 : go gs1 gs2
+              | g1 < g2   = g1 : g2 : go gs1 gs2
+              | g1 == g2  = error "Merge genes with same connection"
+              | otherwise = g2 : g1 : go gs1 gs2
 
 mutateOneWeight :: CtxRandom g m => Float -> Gene -> RandT g m Gene
 mutateOneWeight newp gene = do
@@ -171,29 +180,33 @@ crossOver env (genome1, fitness1) (genome2, fitness2) = do
     let is = map inNode gs -- if we take inNode we should hit the nodes which matter
         h | null is   = 0
           | otherwise = max 0 $ maximum is - (envInNodes env + envOutNodes env)
-    return genome1 { hiddenNodes = h, genes = gs }
+    return genome1 { origin = 4, hiddenNodes = h, genes = gs }
 
 -- Matching genes are inherited randomly (which actually means, only weight & enabling are
 -- taken randomly), while disjoint and excess genes are inherited from the fittest parent
 -- (or from both when equal)
 mergeGenesRandom :: CtxRandom g m => Float -> Float -> [Gene] -> [Gene] -> RandT g m [Gene]
-mergeGenesRandom fitness1 fitness2 = go
-    where go [] gs2 | fitness1 > fitness2 = return []
-                    | otherwise           = return gs2
-          go gs1 [] | fitness2 > fitness1 = return []
-                    | otherwise           = return gs1
-          go (g1:gs1) (g2:gs2)
-              | innov g1 < innov g2
-                  = if fitness1 >= fitness2
-                       then (g1 :) <$> go gs1 (g2:gs2)
-                       else go gs1 (g2:gs2)
-              | innov g1 > innov g2
-                  = if fitness1 <= fitness2
-                       then (g2 :) <$> go (g1:gs1) gs2
-                       else go (g1:gs1) gs2
+mergeGenesRandom fitness1 fitness2 = go []
+    where go acc [] gs2 | fitness1 > fitness2 = return acc
+                        | otherwise           = return $ foldr insertCheckGene acc gs2
+          go acc gs1 [] | fitness2 > fitness1 = return acc
+                        | otherwise           = return $ foldr insertCheckGene acc gs1
+          go acc gl1@(g1:gs1) gl2@(g2:gs2)
+              | g1 < g2 = if fitness1 >= fitness2 then go (insertCheckGene g1 acc) gs1 gl2
+                                                  else go acc gs1 gl2
+              | g1 > g2 = if fitness1 <= fitness2 then go (insertCheckGene g2 acc) gl1 gs2
+                                                  else go acc gl1 gs2
               | otherwise = do -- equal, i.e. matching genes: chose randomly
                   c <- uniform (False, True)
-                  if c then (g1 :) <$> go gs1 gs2 else (g2 :) <$> go gs1 gs2
+                  go (insertCheckGene (if c then g1 else g2) acc) gs1 gs2
+
+-- We insert the gene, but checking it for compatibility with already inserted genes
+insertCheckGene :: Gene -> [Gene] -> [Gene]
+insertCheckGene g gs
+    | (f, t) `connectedIn` gs || f `member` (closure gs t) = gs
+    | otherwise                                            = insertGene g gs
+    where f = inNode g
+          t = outNode g
 
 -- Differently from the original paper, we normalize by the sum of the genes of the 2 genomes
 genomeDistance :: EnvParams -> Genome -> Genome -> Float
@@ -204,8 +217,8 @@ genomeDistance env genome1 genome2
           go (w, d, n) [] gs2 = let e = length gs2 in (w / fromIntegral n, d, e, n + e)
           go (w, d, n) gs1 [] = let e = length gs1 in (w / fromIntegral n, d, e, n + e)
           go (w, d, n) p1@(g1:gs1) p2@(g2:gs2)
-              | innov g1 < innov g2 = go (w, d+1, n+1) gs1 p2
-              | innov g1 > innov g2 = go (w, d+1, n+1) p1 gs2
+              | g1 < g2   = go (w, d+1, n+1) gs1 p2
+              | g1 > g2   = go (w, d+1, n+1) p1 gs2
               | otherwise = go (w + abs (weight g1 - weight g2), d, n+2) gs1 gs2
 
 -- The infrastructure to keep the graph acyclic
